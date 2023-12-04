@@ -16,3 +16,25 @@ version = "1"
 path = "../config"
 [dependencies.utils]
 path = "../utils"
+[dependencies.token-dispenser]
+git = "https://github.com/sol-farm/grant-program"
+rev = "9a0716eff0197cc3b325f03f61d35d5253f213c9"
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+[dependencies.solana-client]
+version = "1.16"
+[dependencies.solana-sdk]
+version = "1.16"
+[dependencies.reqwest]
+version = "0.11"
+[dependencies.log]
+version = "0.4"
+[dependencies.pythnet-sdk]
+git = "https://github.com/pyth-network/pyth-crosschain.git"
+[dependencies.hex]
+version = "0.4"
+[dependencies.spl-associated-token-account]
+version = "2"
+[dependencies.anchor-lang]
+version = "0.27.0"
