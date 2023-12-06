@@ -1,15 +1,15 @@
 use proof_api::{format_url, get_claim_proof};
 use pythnet_sdk::{accumulators::merkle::MerklePath, hashers::Hasher};
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
-use solana_sdk::{signature::read_keypair_file, signer::Signer, pubkey::PubkeyError, instruction::Instruction, transaction::Transaction};
-use token_dispenser::SolanaHasher;
+use solana_sdk::{signature::{read_keypair_file, Keypair}, signer::Signer, pubkey::PubkeyError, instruction::{Instruction, AccountMeta}, transaction::Transaction};
+use token_dispenser::{SolanaHasher, get_receipt_pda, ClaimInfo, Identity, get_config_pda};
 use std::str::FromStr;
 use {
     anyhow::{anyhow, Result},
     clap::{Arg, ArgMatches, Command},
     config::Configuration,
 };
-use anchor_lang::{InstructionData, ToAccountMetas};
+use anchor_lang::{InstructionData, ToAccountMetas, AnchorSerialize, AccountDeserialize};
 mod proof_api;
 
 #[tokio::main]
@@ -69,20 +69,42 @@ async fn process_matches(matches: &ArgMatches, conf_path: &str) -> Result<()> {
             let keypair = c.get_one::<String>("keypair").unwrap();
             let ecosystem = c.get_one::<String>("ecosystem").unwrap();
             let rpc = RpcClient::new(rpc.clone());
-            let keypair = read_keypair_file(keypair).unwrap();
-
+            let keypair = match read_keypair_file(keypair) {
+                Ok(kp) => kp,
+                Err(_) => {
+                    let kp_data = tokio::fs::read_to_string(keypair).await?;
+                    let kp_data = kp_data.trim_end_matches("\n");
+                    Keypair::from_base58_string(kp_data)
+                }
+            };
+            log::info!("retrieving proof");
             let proof = get_claim_proof(ecosystem, &keypair.pubkey().to_string()).await?;
             log::info!("{} claiming {} tokens", keypair.pubkey(),proof.amount);
-            let decoded_proof = hex::decode(proof.proof)?;
+            log::info!("proof {}", proof.proof);
+
+            let decoded_proof = hex::decode(proof.proof.clone())?;
+
+            let inclusion_proof = decoded_proof.chunks(20).filter_map(|chk| {
+                let chk: [u8; 20] = chk.try_into().ok()?;
+                Some(chk)
+            }).collect::<Vec<_>>();
+
             let inclusion_proof = MerklePath::<SolanaHasher>::new(
-                vec![hashv(&decoded_proof)]
+                inclusion_proof
             );
+            let claim_info = ClaimInfo {
+                identity: Identity::Solana { pubkey: token_dispenser::ecosystems::ed25519::Ed25519Pubkey::from(
+                    keypair.pubkey()
+                )  },
+                amount: u64::from_str(&proof.amount).unwrap(),
+            };
+            let claim_certificate = token_dispenser::ClaimCertificate {
+                amount: proof.amount.parse()?,
+                proof_of_identity: token_dispenser::IdentityCertificate::Solana {},
+                proof_of_inclusion: inclusion_proof
+            };
             let ix_data = token_dispenser::instruction::Claim {
-                claim_certificate: token_dispenser::ClaimCertificate {
-                    amount: proof.amount.parse()?,
-                    proof_of_identity: token_dispenser::IdentityCertificate::Solana {},
-                    proof_of_inclusion: inclusion_proof
-                }
+                claim_certificate: claim_certificate
             };
             let pyth_mint = solana_sdk::pubkey::Pubkey::from_str("HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3").unwrap();
             let accounts = token_dispenser::accounts::Claim::populate(
@@ -95,10 +117,16 @@ async fn process_matches(matches: &ArgMatches, conf_path: &str) -> Result<()> {
                 ),
                 solana_sdk::pubkey::Pubkey::from_str("9aDZy2BkW84u667ZMcFJS5evABPDnvvF48tdqsidLGfh").unwrap(),
             );
+
+            let mut accounts = accounts.to_account_metas(None);
+            accounts.push(AccountMeta::new(
+                get_receipt_pda(&claim_info.try_to_vec()?).0,
+                false
+            ));
             let ix_data = ix_data.data();
             let ix = Instruction {
-                program_id: token_dispenser::id(),
-                accounts: accounts.to_account_metas(None),
+                program_id: solana_sdk::pubkey::Pubkey::from_str("EXxqB6XPLczReFcZyigfbdowB6WGYtnkLYC4XZ2ae9ch").unwrap(),
+                accounts: accounts,
                 data: ix_data
             };
             let mut tx = Transaction::new_with_payer(

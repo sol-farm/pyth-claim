@@ -18,7 +18,9 @@ path = "../config"
 path = "../utils"
 [dependencies.token-dispenser]
 git = "https://github.com/sol-farm/grant-program"
-rev = "9a0716eff0197cc3b325f03f61d35d5253f213c9"
+#branch = "feat/mainnet"
+rev = "c6c4533d9a8ecc62319ec628f9c05a2c468f5ec9"
+features = ["mainnet"]
 [dependencies.serde]
 version = "1"
 features = ["derive"]
